@@ -1,112 +1,109 @@
-# Define os serviços que compõem a infraestrutura
+
 services:
-  # Aplicação principal desenvolvida em Python com Flask
+  # Aplicação Python Flask
   carnivorous-garden:
-
-    # Configuração para construção da imagem Docker
     build:
-      context: .  # Diretório utilizado como contexto de construção (o atual)
-      dockerfile: # Nome do arquivo responsável pela construção da imagem
+      context: .
+      dockerfile: Dockerfile
 
-    # Define um nome personalizado para o container
-    container_name:
+    container_name: carnivorous-garden
 
-    # Configura o mapeamento de portas entre host e container
     ports:
-      -
+      - "5005:5005"
 
-    # Compartilha arquivos entre a máquina host e o container
-    # A aplicação deverá disponibilizar seus logs para o Alloy através da pasta logs/app.log
     volumes:
-      -
+      - ./logs:/app/logs
 
-    # Conecta o serviço à rede interna da infraestrutura
     networks:
       - loki
 
-    # Define a política de reinicialização do container
-    restart: 
+    restart: unless-stopped
 
 
-  # Serviço responsável pela coleta e encaminhamento dos logs
+  # Serviço de coleta de logs
   alloy:
+    image: grafana/alloy:latest
 
-    # Imagem oficial do Grafana Alloy
-    image:
+    container_name: alloy
 
-    # Disponibiliza a interface web de gerenciamento do Alloy
     ports:
-      -
+      - "12345:12345"
 
-    # Compartilha o arquivo de configuração e os logs da aplicação
     volumes:
-      -
-      -
+      - ./config.alloy:/etc/alloy/alloy-config.alloy:ro
+      - ./logs:/tmp/app-logs:ro
 
-    # Define o comando de inicialização e o caminho do arquivo de configuração
     command: run --server.http.listen-addr=0.0.0.0:12345 --storage.path=/var/lib/alloy/data /etc/alloy/config.alloy
 
-    # Define os serviços que precisam ser iniciados antes do Alloy
     depends_on:
-      -
-      -
+      - carnivorous-garden
+      - loki
 
     networks:
       - loki
 
+    restart: unless-stopped
 
-  # Serviço responsável pelo armazenamento e consulta dos logs
+
+  # Serviço de armazenamento de logs
   loki:
+    image: grafana/loki:latest
 
-    # Imagem oficial do Grafana Loki
-    image:
+    container_name: loki
 
-    # Disponibiliza a API HTTP do Loki
-    ports:
-      -
-
-    # Compartilha o arquivo de configuração e os dados armazenados
     volumes:
-      -
+      - ./loki-data:/loki
 
-    # Define o arquivo de configuração utilizado pelo Loki
     command: -config.file=/etc/loki/local-config.yaml
 
     networks:
       - loki
 
+    restart: unless-stopped
 
-  # Serviço responsável pela visualização e análise dos dados
+
+  # Serviço de visualização dos logs
   grafana:
+    image: grafana/grafana:latest
 
-    # Imagem oficial do Grafana
-    image:
+    container_name: grafana
 
-    # Configurações de autenticação e acesso
     environment:
-      # Define o papel dos usuários anônimos
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-
-      # Habilita o acesso sem autenticação
       - GF_AUTH_ANONYMOUS_ENABLED=true
-
-      # Desabilita a autenticação básica
       - GF_AUTH_BASIC_ENABLED=false
 
-    # Disponibiliza a interface web do Grafana
     ports:
-      -
+      - "3000:3000"
 
-    # Configurar o provisionamento automático da fonte de dados Loki.
-    # Pesquise como utilizar entrypoint, Shell e heredoc (EOF)
-    # para criar o arquivo de configuração automaticamente.
     entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /etc/grafana/provisioning/datasources
+
+        cat <<EOF > /etc/grafana/provisioning/datasources/loki.yaml
+        apiVersion: 1
+        datasources:
+          - name: Loki
+            type: loki
+            access: proxy
+            url: http://loki:3100
+            isDefault: true
+            editable: true
+        EOF
+
+        exec /run.sh
+
+    depends_on:
+      - loki
 
     networks:
       - loki
 
-# Define a rede interna compartilhada pelos serviços
+    restart: unless-stopped
+
+
 networks:
   loki:
-    # Utiliza o driver bridge para comunicação entre containers
     driver: bridge
